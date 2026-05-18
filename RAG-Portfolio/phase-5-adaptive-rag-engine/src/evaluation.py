@@ -63,38 +63,53 @@ def run_ragas(
             "contexts": [[c.text for c in chunks]],
         })
 
-        # 10-minute timeout per metric — Ollama local inference is slow
-        run_cfg = RunConfig(timeout=600, max_retries=2, max_wait=600)
-
-        result = evaluate(
-            dataset,
-            metrics=[faithfulness, answer_relevancy],
-            llm=ragas_llm,
-            embeddings=ragas_emb,
-            raise_exceptions=False,
-            run_config=run_cfg,
-        )
-
-        # result is a ragas Result object; index by column name gives a float
-        faith = result["faithfulness"]
-        rel   = result["answer_relevancy"]
-
-        # Handle both scalar and sequence returns across ragas versions
-        if hasattr(faith, "__iter__"):
-            faith = list(faith)[0]
-        if hasattr(rel, "__iter__"):
-            rel = list(rel)[0]
+        # answer_relevancy uses embeddings (fast, works locally).
+        # faithfulness requires N sequential LLM calls (one per statement) — with
+        # Ollama on CPU this takes 5-10 min and reliably times out. Run it separately
+        # so a faithfulness timeout cannot block answer_relevancy from being saved.
+        run_cfg = RunConfig(timeout=600, max_retries=1, max_wait=60)
 
         def _safe(v):
-            """Convert to float, return None for nan/None."""
             if v is None:
                 return None
             f = float(v)
             return round(f, 4) if not math.isnan(f) else None
 
+        # --- answer_relevancy (fast) ---
+        rel_result = evaluate(
+            dataset,
+            metrics=[answer_relevancy],
+            llm=ragas_llm,
+            embeddings=ragas_emb,
+            raise_exceptions=False,
+            run_config=run_cfg,
+        )
+        rel_raw = rel_result["answer_relevancy"]
+        if hasattr(rel_raw, "__iter__"):
+            rel_raw = list(rel_raw)[0]
+        rel = _safe(rel_raw)
+
+        # --- faithfulness (slow — best-effort, may stay None on small machines) ---
+        faith = None
+        try:
+            faith_result = evaluate(
+                dataset,
+                metrics=[faithfulness],
+                llm=ragas_llm,
+                embeddings=ragas_emb,
+                raise_exceptions=False,
+                run_config=RunConfig(timeout=600, max_retries=1, max_wait=60),
+            )
+            faith_raw = faith_result["faithfulness"]
+            if hasattr(faith_raw, "__iter__"):
+                faith_raw = list(faith_raw)[0]
+            faith = _safe(faith_raw)
+        except Exception as fe:
+            logger.warning("[RAGAS] faithfulness timed out: %s", fe)
+
         return {
-            "faithfulness":     _safe(faith),
-            "answer_relevancy": _safe(rel),
+            "faithfulness":     faith,
+            "answer_relevancy": rel,
             "context_recall":   None,  # requires ground truth — not available
         }
 
