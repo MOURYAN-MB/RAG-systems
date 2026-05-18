@@ -142,7 +142,7 @@ uvicorn api.main:app --port 8080 --reload
 ## Project Structure
 
 ```
-GenAI-RAG-Portfolio/
+RAG-Portfolio/
 ├── README.md                              ← This file
 ├── phase-1-techdocs-assistant/
 │   ├── README.md
@@ -182,6 +182,6 @@ GenAI-RAG-Portfolio/
 
 ---
 
-## Author
+## About
 
-Built as a GenAI engineering portfolio at **Zertain India** — demonstrating the full spectrum of RAG system design from fundamentals to production.
+A self-directed GenAI engineering portfolio demonstrating the full spectrum of RAG system design — from fundamentals to production.
