@@ -52,11 +52,11 @@ graph LR
     P4["👥 Phase 4\nMulti-Agent\nSupervisor pattern"] -->|add production| P5
     P5["⚙️ Phase 5\nAdaptive RAG\nHybrid + RAGAS + Airflow"]
 
-    style P1 fill:#e8f4f8,stroke:#2196F3
-    style P2 fill:#e8f5e9,stroke:#4CAF50
-    style P3 fill:#fff3e0,stroke:#FF9800
-    style P4 fill:#fce4ec,stroke:#E91E63
-    style P5 fill:#ede7f6,stroke:#673AB7
+    style P1 fill:#1565C0,stroke:#0D47A1,color:#FFFFFF
+    style P2 fill:#2E7D32,stroke:#1B5E20,color:#FFFFFF
+    style P3 fill:#E65100,stroke:#BF360C,color:#FFFFFF
+    style P4 fill:#AD1457,stroke:#880E4F,color:#FFFFFF
+    style P5 fill:#6A1B9A,stroke:#4A148C,color:#FFFFFF
 ```
 
 | Phase | Question it answers | Key addition |
@@ -123,7 +123,7 @@ flowchart TD
     PAPERS -->|results added to state| AGENT
     WEB -->|results added to state| AGENT
 
-    style END fill:#c8e6c9,stroke:#388E3C
+    style END fill:#2E7D32,stroke:#1B5E20,color:#FFFFFF
 ```
 
 Every tool call, result, and reasoning step is shown live in the Streamlit UI as the agent thinks.
@@ -150,8 +150,8 @@ flowchart TD
     SUP -->|Step 3| DONE([FINISH])
     DONE --> RPT[Downloadable Report]
 
-    style DONE fill:#c8e6c9,stroke:#388E3C
-    style RPT fill:#e3f2fd,stroke:#1976D2
+    style DONE fill:#2E7D32,stroke:#1B5E20,color:#FFFFFF
+    style RPT fill:#1565C0,stroke:#0D47A1,color:#FFFFFF
 ```
 
 ---
@@ -175,8 +175,8 @@ flowchart TD
     LLM -.->|BackgroundTask| RAGAS[RAGAS Evaluation\nfaithfulness · answer_relevancy]
     RAGAS --> DB[(PostgreSQL\nEvaluation records)]
 
-    style RESP fill:#c8e6c9,stroke:#388E3C
-    style RAGAS fill:#fff3e0,stroke:#FF9800
+    style RESP fill:#2E7D32,stroke:#1B5E20,color:#FFFFFF
+    style RAGAS fill:#E65100,stroke:#BF360C,color:#FFFFFF
 ```
 
 #### Quality Monitoring & Self-Healing
@@ -191,8 +191,8 @@ flowchart LR
     CHECK -->|no| DONE[✓ Quality OK]
     INGEST --> RESOLVE[Resolve alerts]
 
-    style DONE fill:#c8e6c9,stroke:#388E3C
-    style INGEST fill:#fce4ec,stroke:#E91E63
+    style DONE fill:#2E7D32,stroke:#1B5E20,color:#FFFFFF
+    style INGEST fill:#AD1457,stroke:#880E4F,color:#FFFFFF
 ```
 
 #### Infrastructure
