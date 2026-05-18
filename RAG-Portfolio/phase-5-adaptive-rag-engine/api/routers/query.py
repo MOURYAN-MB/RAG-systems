@@ -1,5 +1,7 @@
+import asyncio
 import time
-from fastapi import APIRouter, BackgroundTasks
+from concurrent.futures import ThreadPoolExecutor
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from src.retrieval import hybrid_search, RetrievedChunk
@@ -10,6 +12,11 @@ from src.database import SessionLocal, Evaluation
 from src.config import OLLAMA_MODEL
 
 router = APIRouter(prefix="/query", tags=["query"])
+
+# Dedicated thread pool — RAGAS calls asyncio.run() internally, which
+# fails if invoked from within FastAPI's already-running event loop.
+# Running it in an executor gives it a clean thread with no active loop.
+_eval_executor = ThreadPoolExecutor(max_workers=1)
 
 
 class QueryRequest(BaseModel):
@@ -64,7 +71,7 @@ def _log_evaluation(
 
 
 @router.post("", response_model=QueryResponse)
-async def query(req: QueryRequest, background_tasks: BackgroundTasks):
+async def query(req: QueryRequest):
     t0 = time.time()
 
     chunks, _pipeline_meta = hybrid_search(req.question)
@@ -73,8 +80,11 @@ async def query(req: QueryRequest, background_tasks: BackgroundTasks):
 
     latency_ms = int((time.time() - t0) * 1000)
 
-    # Schedule RAGAS evaluation asynchronously — user gets response immediately
-    background_tasks.add_task(
+    # Submit to executor — gives RAGAS a clean thread where asyncio.run() works.
+    # BackgroundTasks runs inside the event loop, which blocks RAGAS's asyncio.run().
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(
+        _eval_executor,
         _log_evaluation,
         req.question, answer, chunks, latency_ms, req.model, req.provider,
     )
