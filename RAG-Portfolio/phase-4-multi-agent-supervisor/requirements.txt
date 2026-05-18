@@ -1,0 +1,11 @@
+langgraph
+langchain-ollama
+langchain-anthropic
+langchain-openai
+langchain-community
+langchain-chroma
+langchain-huggingface
+sentence-transformers
+tavily-python
+streamlit
+python-dotenv
