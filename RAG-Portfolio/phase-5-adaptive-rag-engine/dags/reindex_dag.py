@@ -2,24 +2,22 @@
 Airflow DAG: quality_monitor_reindex
 
 Runs every 30 minutes:
-1. Compute sliding-window RAGAS scores from PostgreSQL.
-2. If faithfulness < FAITHFULNESS_THRESHOLD or context_recall < CONTEXT_RECALL_THRESHOLD,
-   trigger a full re-index of all documents.
+1. Call GET /quality on the FastAPI service to read sliding-window RAGAS scores.
+2. If status == "alert", call POST /ingest/rebuild to trigger re-indexing.
 3. Log outcome to the Airflow task log.
+
+Uses the FastAPI REST API (no direct src/ imports) so the DAG has no Python
+dependency on the application code or its venv.
 """
 from __future__ import annotations
 
 import os
-import sys
 from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-# ── Project root on PYTHONPATH so src.* imports work inside Airflow ──────────
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
+_API_URL = os.getenv("RAG_API_URL", "http://host.docker.internal:8080")
 
 default_args = {
     "owner": "adaptive-rag",
@@ -29,47 +27,61 @@ default_args = {
 
 
 def check_quality(**ctx):
-    """Return quality status dict; pushed to XCom for the next task."""
-    from src.monitor import compute_quality_status
-    status = compute_quality_status()
-    print(f"[quality-check] status={status}")
+    """
+    Fetch quality status from the RAG API and push to XCom.
+    Fails the task (raises) if the API is unreachable.
+    """
+    import requests
+    r = requests.get(f"{_API_URL}/quality", timeout=15)
+    r.raise_for_status()
+    status = r.json()
+    print(f"[quality-check] {status}")
     ctx["ti"].xcom_push(key="quality_status", value=status)
 
 
 def maybe_reindex(**ctx):
-    """Re-index only when quality is below threshold."""
-    from src.config import FAITHFULNESS_THRESHOLD, CONTEXT_RECALL_THRESHOLD
-    from src.monitor import resolve_alerts
-    from src.ingestion import ingest_documents
-
+    """
+    Trigger re-indexing via POST /ingest/rebuild only when quality is in alert.
+    After re-indexing, log the updated quality status.
+    """
+    import requests
     status = ctx["ti"].xcom_pull(key="quality_status", task_ids="check_quality")
 
     if status is None or status.get("status") == "no_data":
         print("[reindex] No quality data yet — skipping.")
         return
 
-    faith  = status.get("avg_faithfulness",   1.0)
-    recall = status.get("avg_context_recall",  1.0)
-    alert  = status.get("status") == "alert"
+    if status.get("status") != "alert":
+        faith  = status.get("avg_faithfulness",  "N/A")
+        recall = status.get("avg_context_recall", "N/A")
+        print(f"[reindex] Quality healthy (faithfulness={faith}, context_recall={recall}) — no action.")
+        return
 
-    if alert or faith < FAITHFULNESS_THRESHOLD or recall < CONTEXT_RECALL_THRESHOLD:
+    faith  = status.get("avg_faithfulness",  0)
+    recall = status.get("avg_context_recall", 0)
+    print(
+        f"[reindex] QUALITY ALERT — faithfulness={faith}, context_recall={recall}. "
+        f"Triggering re-index..."
+    )
+    r = requests.post(f"{_API_URL}/ingest/rebuild", timeout=300)
+    r.raise_for_status()
+    result = r.json()
+    print(f"[reindex] Re-index triggered: {result}")
+
+    # Confirm recovery
+    r2 = requests.get(f"{_API_URL}/quality", timeout=15)
+    if r2.ok:
+        post = r2.json()
         print(
-            f"[reindex] Quality below threshold "
-            f"(faithfulness={faith:.2f}, context_recall={recall:.2f}) — re-indexing."
-        )
-        ingest_documents()
-        resolve_alerts()
-        print("[reindex] Re-indexing complete. Alerts resolved.")
-    else:
-        print(
-            f"[reindex] Quality healthy "
-            f"(faithfulness={faith:.2f}, context_recall={recall:.2f}) — no action."
+            f"[reindex] Post-reindex status: {post.get('status')} — "
+            f"faithfulness={post.get('avg_faithfulness')}, "
+            f"context_recall={post.get('avg_context_recall')}"
         )
 
 
 with DAG(
     dag_id="quality_monitor_reindex",
-    description="Check RAGAS quality scores; re-index if below threshold",
+    description="Check RAGAS quality via API; re-index if alert threshold breached",
     start_date=datetime(2024, 1, 1),
     schedule_interval="*/30 * * * *",
     catchup=False,
