@@ -11,6 +11,7 @@ from pathlib import Path
 import streamlit as st
 import requests
 import pandas as pd
+import altair as alt
 
 # ── Project root so src.* imports work when run from repo root ───────────────
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -31,10 +32,11 @@ with st.sidebar:
     st.caption("Phase 5 — Production RAG with RAGAS evaluation")
 
     st.subheader("Model")
-    provider = st.selectbox("Provider", ["ollama", "anthropic", "openai"])
+    provider = st.selectbox("Provider", ["ollama", "google", "anthropic", "openai"])
 
     model_map = {
         "ollama":    ["llama3.1:latest", "llama3.2:latest", "mistral:latest"],
+        "google":    ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"],
         "anthropic": ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
         "openai":    ["gpt-4o-mini", "gpt-4o"],
     }
@@ -165,12 +167,16 @@ with tab_analytics:
     # ── Score gauges ───────────────────────────────────────────────────────
     if status_label not in ("no_data", "api_unreachable"):
         c1, c2, c3 = st.columns(3)
-        c1.metric("Faithfulness",      f"{qs.get('avg_faithfulness',    0):.2f}", help="Target ≥ 0.70")
-        c2.metric("Answer Relevancy",  f"{qs.get('avg_answer_relevancy', 0):.2f}")
-        c3.metric("Context Recall",    f"{qs.get('avg_context_recall',   0):.2f}", help="Target ≥ 0.60")
+        faith = qs.get('avg_faithfulness')
+        recall = qs.get('avg_context_recall')
+        c1.metric("Faithfulness",     f"{faith:.2f}"  if faith   is not None else "N/A", help="Target ≥ 0.70")
+        c2.metric("Answer Relevancy", f"{qs.get('avg_answer_relevancy') or 0:.2f}")
+        c3.metric("Context Recall",   f"{recall:.2f}" if recall  is not None else "N/A", help="Target ≥ 0.60")
 
-        if "window_size" in qs:
-            st.caption(f"Sliding window: last {qs['window_size']} evaluations")
+        n = qs.get("n", 0)
+        window = qs.get("window", 50)
+        if n:
+            st.caption(f"Sliding window: {n} of last {window} evaluations")
 
     st.divider()
 
@@ -199,7 +205,66 @@ with tab_analytics:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df = df.sort_values("timestamp")
 
-            st.line_chart(df.set_index("timestamp")[["faithfulness", "answer_relevancy", "context_recall"]])
+            # Melt to long format for Altair
+            df_long = df.melt(
+                id_vars="timestamp",
+                value_vars=["faithfulness", "answer_relevancy", "context_recall"],
+                var_name="metric",
+                value_name="score",
+            ).dropna(subset=["score"])
+
+            color_scale = alt.Scale(
+                domain=["faithfulness", "answer_relevancy", "context_recall"],
+                range=["#E05C5C", "#4C9EE8", "#2ECC71"],  # red, blue, green
+            )
+
+            # Clamp scores to [0, 1] — RAGAS occasionally returns slightly above 1.0
+            df_long["score"] = df_long["score"].clip(0, 1)
+
+            lines = (
+                alt.Chart(df_long)
+                .mark_line(point=alt.OverlayMarkDef(size=60))
+                .encode(
+                    x=alt.X("timestamp:T", title="Time", axis=alt.Axis(format="%b %d %H:%M")),
+                    y=alt.Y("score:Q", title="Score", scale=alt.Scale(domain=[0, 1.0], clamp=True)),
+                    color=alt.Color("metric:N", scale=color_scale, legend=alt.Legend(title="Metric")),
+                    tooltip=[
+                        alt.Tooltip("timestamp:T", title="Time", format="%b %d %H:%M"),
+                        alt.Tooltip("metric:N", title="Metric"),
+                        alt.Tooltip("score:Q", title="Score", format=".3f"),
+                    ],
+                )
+            )
+
+            # Dashed threshold reference lines with text labels
+            thresholds = pd.DataFrame([
+                {"metric": "faithfulness",   "threshold": 0.70, "label": "target ≥ 0.70"},
+                {"metric": "context_recall", "threshold": 0.60, "label": "target ≥ 0.60"},
+            ])
+            thresh_lines = (
+                alt.Chart(thresholds)
+                .mark_rule(strokeDash=[6, 4], opacity=0.6, strokeWidth=1.5)
+                .encode(
+                    y=alt.Y("threshold:Q"),
+                    color=alt.Color("metric:N", scale=color_scale, legend=None),
+                    tooltip=[alt.Tooltip("label:N", title="")],
+                )
+            )
+            thresh_labels = (
+                alt.Chart(thresholds)
+                .mark_text(align="left", dx=4, dy=-6, fontSize=11, opacity=0.7)
+                .encode(
+                    x=alt.value(0),
+                    y=alt.Y("threshold:Q"),
+                    text=alt.Text("label:N"),
+                    color=alt.Color("metric:N", scale=color_scale, legend=None),
+                )
+            )
+
+            st.altair_chart(
+                (lines + thresh_lines + thresh_labels).properties(height=320).interactive(),
+                use_container_width=True,
+            )
         else:
             st.info("No evaluation history yet.")
     except Exception as e:
