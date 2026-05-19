@@ -19,7 +19,7 @@ def compute_quality_status(window: int = QUALITY_WINDOW) -> dict:
     try:
         rows = (
             db.query(Evaluation)
-            .filter(Evaluation.faithfulness.isnot(None))
+            .filter(Evaluation.answer_relevancy.isnot(None))
             .order_by(desc(Evaluation.created_at))
             .limit(window)
             .all()
@@ -28,19 +28,35 @@ def compute_quality_status(window: int = QUALITY_WINDOW) -> dict:
         if not rows:
             return {"status": "no_data", "n": 0}
 
-        avg_faithfulness = sum(r.faithfulness or 0 for r in rows) / len(rows)
-        avg_answer_rel   = sum(r.answer_relevancy or 0 for r in rows) / len(rows)
+        rows_with_faith   = [r for r in rows if r.faithfulness   is not None]
+        rows_with_recall  = [r for r in rows if r.context_recall is not None]
 
-        faith_alert = avg_faithfulness < FAITHFULNESS_THRESHOLD
-        is_alert    = faith_alert
+        avg_faithfulness = (
+            sum(r.faithfulness for r in rows_with_faith) / len(rows_with_faith)
+            if rows_with_faith else None
+        )
+        avg_context_recall = (
+            sum(r.context_recall for r in rows_with_recall) / len(rows_with_recall)
+            if rows_with_recall else None
+        )
+        avg_answer_rel = sum(r.answer_relevancy or 0 for r in rows) / len(rows)
+
+        faith_alert = (
+            avg_faithfulness < FAITHFULNESS_THRESHOLD
+            if avg_faithfulness is not None else False
+        )
+        recall_alert = (
+            avg_context_recall < CONTEXT_RECALL_THRESHOLD
+            if avg_context_recall is not None else False
+        )
 
         return {
-            "status":               "alert" if is_alert else "healthy",
-            "avg_faithfulness":     round(avg_faithfulness, 3),
-            "avg_answer_relevancy": round(avg_answer_rel, 3),
-            "avg_context_recall":   None,  # requires ground truth
+            "status":               "alert" if (faith_alert or recall_alert) else "healthy",
+            "avg_faithfulness":     round(avg_faithfulness,    3) if avg_faithfulness    is not None else None,
+            "avg_answer_relevancy": round(avg_answer_rel,      3),
+            "avg_context_recall":   round(avg_context_recall,  3) if avg_context_recall is not None else None,
             "faithfulness_alert":   faith_alert,
-            "recall_alert":         False,
+            "recall_alert":         recall_alert,
             "n":                    len(rows),
             "window":               window,
         }
